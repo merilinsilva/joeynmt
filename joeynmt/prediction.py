@@ -158,12 +158,17 @@ def predict(
                 assert model.loss_function is not None
 
                 # don't track gradients during validation
-                with torch.autocast(device_type=device.type, enabled=fp16):
+                if device.type in ("cuda", "cpu"):
+                    with torch.autocast(device_type=device.type, enabled=fp16):
+                        with torch.no_grad():
+                            batch_loss, log_probs, attn, n_correct = model(
+                                return_type="loss",
+                                return_attention=return_attention,
+                                **vars(batch))
+                else:
+                    # fallback for unsupported device types like MPS
                     with torch.no_grad():
-                        batch_loss, log_probs, attn, n_correct = model(
-                            return_type="loss",
-                            return_attention=return_attention,
-                            **vars(batch))
+                        batch_loss, log_probs, attn, n_correct = model(return_type="loss", return_attention=return_attention, **vars(batch))
 
                 # sum over multiple gpus
                 batch_loss = batch.normalize(batch_loss, "sum", n_gpu=n_gpu)
