@@ -101,11 +101,7 @@ class TrainManager:
         logger.info(self.model)
 
         # CPU / GPU
-        ####CHANGED
-        self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-
-
-        
+        self.device = device
         self.n_gpu = n_gpu
         self.num_workers = num_workers
         if self.device.type == "cuda":
@@ -119,9 +115,10 @@ class TrainManager:
         # fp16
         self.fp16: bool = fp16  # True or False for scaler
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.fp16)
-
-        ###CHANGED
-        self.dtype = torch.float16 if self.device.type == "mps" else torch.float32  # MPS supports float16
+        if self.fp16:
+            self.dtype = torch.float16 if self.device.type == "cuda" else torch.bfloat16
+        else:
+            self.dtype = torch.get_default_dtype()
 
         # save/delete checkpoints
         self.num_ckpts = keep_best_ckpts
@@ -574,16 +571,18 @@ class TrainManager:
         self.model.train()
 
         # This caused training errors with CPU. Experiment if you want to use GPU/cuda
-        print(f"DEBUG:\n \
-             device type: \t{self.device.type} \
-             enabled or na?: \t{self.fp16} \
-             ")
-        if self.device.type in ("cuda", "cpu"):
-            with torch.autocast(device_type=self.device.type, dtype=self.dtype, enabled=self.fp16):
-                batch_loss, _, _, correct_tokens = self.model(return_type="loss", **vars(batch))
-        else:
-            # fallback for unsupported device types like MPS
-            batch_loss, _, _, correct_tokens = self.model(return_type="loss", **vars(batch))
+        #print(f"DEBUG:\n \
+        #      device type: \t{self.device.type} \
+        #      enabled or na?: \t{self.fp16} \
+        #      ")
+        #with torch.autocast(device_type=self.device.type,
+        #                    dtype=self.dtype,
+        #                    enabled=self.fp16):
+        # get loss (run as during training with teacher forcing)
+        #batch_loss, _, _, correct_tokens = self.model(return_type="loss",
+        #                                                 **vars(batch))
+        batch_loss, _, _, correct_tokens = self.model(return_type="loss",
+                                                          **vars(batch))
 
         # normalize batch loss
         norm_batch_loss = batch.normalize(
@@ -788,17 +787,12 @@ def train(cfg_file: str, skip_test: bool = False) -> None:
     :param cfg_file: path to configuration yaml file
     :param skip_test: whether a test should be run or not after training
     """
+    # read config file
+    cfg = load_config(Path(cfg_file))
 
-    cfg_file = Path(cfg_file)  # You may need to pass this from main() if not already present
-
-    cfg = load_config(cfg_file)
-
-    # Create a model directory under a "models" subfolder relative to the config
-    model_subdir = cfg["training"].get("model_subdir", "transformer_model_post")  # CHANGED ACCORDING TO MODEL
-    model_dir_path = cfg_file.parent / "models" / model_subdir
-
+    # make logger
     model_dir = make_model_dir(
-        model_dir_path,
+        Path(cfg["training"]["model_dir"]),
         overwrite=cfg["training"].get("overwrite", False),
     )
     pkg_version = make_logger(model_dir, mode="train")
